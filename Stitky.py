@@ -404,3 +404,64 @@ if st.session_state.addresses:
                     st.error(f"Chyba systému: {str(e)}")
 
         # --- ZOBRAZENÍ VÝSLEDKŮ ---
+        if st.session_state.parcel_number:
+            st.divider()
+            st.success(f"✅ Zásilka **{st.session_state.parcel_number}** byla úspěšně založena!")
+            
+            if st.session_state.dropoff_pin:
+                st.markdown(f"""
+                <div style="background-color:#e1f5fe; padding:20px; border-radius:10px; border-left:6px solid #0288d1; margin-bottom:15px;">
+                    <span style="font-size:16px; color:#555;">Kód pro bezštítkové vrácení balíku (PIN):</span><br>
+                    <strong style="font-size:32px; color:#01579b; letter-spacing:2px;">{st.session_state.dropoff_pin}</strong>
+                </div>
+                """, unsafe_allow_html=True)
+                
+            if st.session_state.pdf_bytes:
+                lbl = "📄 Stáhnout Aztec kód (PDF)" if service_type == "RETURN" and return_mode == "DROP_OFF_CODE" else "📄 Stáhnout PDF Štítek"
+                st.download_button(lbl, data=st.session_state.pdf_bytes, file_name=f"DPD_{st.session_state.parcel_number}.pdf", mime="application/pdf", use_container_width=True)
+
+            if st.session_state.needs_pickup_order:
+                st.info("🚛 **Tento typ sběrné služby vyžaduje objednání fyzického svozu kurýrem.**")
+                if st.button("Objednat svoz u DPD pro tuto zásilku", type="primary", use_container_width=True):
+                    with st.spinner("Objednávám svoz na serveru..."):
+                        headers = {"x-api-key": st.session_state.api_key, "Content-Type": "application/json"}
+                        pickup_payload = {"parcels": [{"parcelNumber": str(st.session_state.parcel_number)}]}
+                        try:
+                            pick_res = requests.post(f"{API_BASE}/v1/pickups", headers=headers, json=pickup_payload)
+                            pickup_data = safe_response_parse(pick_res)
+                            st.session_state.last_pickup_response = pickup_data
+                                
+                            if pick_res.status_code in [200, 201] and not (isinstance(pickup_data, str) and pickup_data.startswith("HTML_ERROR")):
+                                st.success("✅ Fyzický svoz kurýrem byl úspěšně objednán!")
+                            else:
+                                st.error(f"❌ Chyba při objednání svozu (Kód {pick_res.status_code})")
+                                if isinstance(pickup_data, (dict, list)):
+                                    st.json(pickup_data)
+                                else:
+                                    st.code(str(pickup_data))
+                        except Exception as e:
+                            st.error(f"Systémová chyba při svozu: {str(e)}")
+
+# --- DEBUGGING LOKÁLNÍ ---
+if st.session_state.last_request_shipment:
+    st.divider()
+    with st.expander("🛠️ Technický detail komunikace (Request / Response)"):
+        st.write("**1. Zásilka (Shipment) - Odpověď API:**")
+        if isinstance(st.session_state.last_response_shipment, (dict, list)):
+            st.json(st.session_state.last_response_shipment)
+        else:
+            st.code(str(st.session_state.last_response_shipment))
+            
+        if st.session_state.last_label_response:
+            st.write("**2. Generování Štítku / Drop-off kódů - Odpověď API:**")
+            if isinstance(st.session_state.last_label_response, (dict, list)):
+                st.json(st.session_state.last_label_response)
+            else:
+                st.code(str(st.session_state.last_label_response))
+        
+        if st.session_state.last_pickup_response:
+            st.write("**3. Svoz (Pickup Order) - Odpověď API:**")
+            if isinstance(st.session_state.last_pickup_response, (dict, list)):
+                st.json(st.session_state.last_pickup_response)
+            else:
+                st.code(str(st.session_state.last_pickup_response))
