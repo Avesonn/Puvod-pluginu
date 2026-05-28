@@ -325,7 +325,7 @@ if st.session_state.addresses:
                     ship_data = safe_response_parse(ship_res)
                     st.session_state.last_response_shipment = ship_data
                     
-                       if ship_res.status_code not in [200, 201] or not isinstance(ship_data, (dict, list)):
+                    if ship_res.status_code not in [200, 201] or not isinstance(ship_data, (dict, list)):
                         st.error(f"❌ DPD API zamítlo požadavek (Kód {ship_res.status_code})")
                         if isinstance(ship_data, str) and ship_data.startswith("HTML_ERROR"):
                             st.code(ship_data)
