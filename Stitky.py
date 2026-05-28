@@ -193,10 +193,10 @@ if st.session_state.addresses:
 
             # Přidání dobírky do uzlu services
             if cod_enabled:
-                serv_obj["cod"] = {
-                    "amount": float(cod_amount),
+                serv_obj["cashOnDelivery"] = {
+                    "amountCents": int(float(cod_amount) * 100),
                     "currency": currency,
-                    "paymentMethod": "CashOrCard"
+                    "payment": "CashOrCard"
                 }
 
             payload[0]["services"] = serv_obj
