@@ -425,7 +425,13 @@ if st.session_state.addresses:
                 if st.button("Objednat svoz u DPD pro tuto zásilku", type="primary", use_container_width=True):
                     with st.spinner("Objednávám svoz na serveru..."):
                         headers = {"x-api-key": st.session_state.api_key, "Content-Type": "application/json"}
-                        pickup_payload = {"parcels": [{"parcelNumber": str(st.session_state.parcel_number)}]}
+                        pickup_payload = [
+    {
+        "parcel": {
+            "parcelNumber": str(st.session_state.parcel_number)
+        }
+    }
+]
                         try:
                             pick_res = requests.post(f"{API_BASE}/v1/pickups", headers=headers, json=pickup_payload)
                             pickup_data = safe_response_parse(pick_res)
