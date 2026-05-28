@@ -3,10 +3,11 @@ import streamlit.components.v1 as components
 import requests
 import json
 import base64
+import re  # Nově přidaná knihovna pro chytrou extrakci textu
 
 API_BASE = "https://geoapi-test.dpd.cz"
 
-# Inicializace session state pro uchování stavu
+# Inicializace session state
 if 'api_key' not in st.session_state:
     st.session_state.api_key = ''
 if 'addresses' not in st.session_state:
@@ -97,7 +98,6 @@ if st.session_state.addresses:
     active_dsw = selected_address_obj["dsw"]
     active_it4emId = selected_address_obj["it4emId"]
     
-    # Rozšířený výběr o DPD Pickup
     service_type = st.selectbox(
         "Zvolte produkt/službu:", 
         options=["CLASSIC", "PRIVATE", "PICKUP"], 
@@ -108,15 +108,12 @@ if st.session_state.addresses:
         }[x]
     )
     
-    # Vykreslení widgetu a pole pro ID, pokud je zvolen Pickup
     pickup_id = ""
     if service_type == "PICKUP":
-        st.info("Zvolili jste doručení na výdejní místo. Zadejte prosím ID vybrané pobočky.")
+        st.info("Můžete vložit jen ID, nebo sem klidně zkopírujte celý text pobočky. Náš systém si ID sám najde.")
         pickup_id = st.text_input("ID výdejního místa (např. CZ12345):")
         
         with st.expander("📍 Otevřít DPD Widget (Vyhledání výdejního místa)", expanded=False):
-            st.markdown("Najděte požadované místo na mapě, zkopírujte jeho ID a vložte ho do pole výše.")
-            # Vložení interaktivního DPD Widgetu jako Iframe
             components.iframe("https://api.dpd.cz/widget/latest/demo.html", height=600, scrolling=True)
 
     st.header("3. Detaily příjemce")
@@ -135,7 +132,6 @@ if st.session_state.addresses:
     ref2 = st.text_input("Reference 2:", "")
     
     if st.button("Odeslat zásilku a vygenerovat PDF štítek", type="primary"):
-        # Validace, pokud chybí ID u Pickupu
         if service_type == "PICKUP" and not pickup_id.strip():
             st.error("Pro službu DPD Pickup musíte vyplnit 'ID výdejního místa'!")
             st.stop()
@@ -167,19 +163,24 @@ if st.session_state.addresses:
             "services": {}
         }]
         
-        # Logika pro přidání specifických služeb (Notifikace a Pickup Point)
         if service_type == "PRIVATE":
             payload[0]["services"] = {"notification": True}
         elif service_type == "PICKUP":
+            # --- CHYTRÁ EXTRAKCE ID VÝDEJNÍHO MÍSTA ---
+            clean_id = pickup_id.strip()
+            # Regulární výraz: Najde 2 písmena a za nimi jakákoliv čísla (např. CZ12345, SK987)
+            match = re.search(r'([a-zA-Z]{2}\d+)', clean_id)
+            if match:
+                clean_id = match.group(1).upper() # Vytáhne nalezené ID a hodí ho na velká písmena
+            
             payload[0]["services"] = {
                 "notification": True,
-                "pickupPoint": pickup_id.strip()
+                "pickupPoint": clean_id
             }
             
         headers = {"x-api-key": st.session_state.api_key, "Content-Type": "application/json"}
         st.session_state.last_request_shipment = payload
         
-        # 1. Volání POST /v1/shipments
         with st.spinner("Vytvářím zásilku na serveru DPD..."):
             try:
                 ship_res = requests.post(f"{API_BASE}/v1/shipments", headers=headers, json=payload)
@@ -191,17 +192,15 @@ if st.session_state.addresses:
                     ship_data = {}
                     st.session_state.last_response_shipment = ship_res.text
                 
-                # --- VYLEPŠENÝ ERROR HANDLING ---
                 if ship_res.status_code not in [200, 201]:
                     st.error(f"❌ DPD API zamítlo požadavek (Kód {ship_res.status_code})")
                     st.markdown("**Detailní výpis chyb od serveru:**")
                     if isinstance(ship_data, dict) or isinstance(ship_data, list):
-                        st.json(ship_data) # Zobrazí krásně čitelný JSON s detailem chyby
+                        st.json(ship_data)
                     else:
                         st.text(ship_res.text)
-                    st.stop() # Ukončíme běh, dál (ke štítku) už nepokračujeme
+                    st.stop()
                 
-                # Získání čísla zásilky
                 def find_parcel_number(d):
                     if isinstance(d, dict):
                         if "parcelNumbers" in d and isinstance(d["parcelNumbers"], dict) and "main" in d["parcelNumbers"]:
@@ -229,7 +228,6 @@ if st.session_state.addresses:
                 st.error(f"Chyba komunikace při tvorbě zásilky: {str(e)}")
                 st.stop()
         
-        # 2. Volání POST /v1/parcels/labels (Štítek se tvoří pro všechny služby stejně)
         if st.session_state.parcel_number:
             with st.spinner("Stahuji tiskový štítek..."):
                 label_payload = {
@@ -275,7 +273,7 @@ if st.session_state.addresses:
 
 st.divider()
 
-# --- KROK 4: Výsledek a stažení hotového štítku ---
+# --- KROK 4: Výsledek ---
 if st.session_state.parcel_number and st.session_state.pdf_bytes:
     st.header("4. Stažení štítku")
     st.info(f"Úspěšně vytvořeno číslo zásilky: **{st.session_state.parcel_number}**")
