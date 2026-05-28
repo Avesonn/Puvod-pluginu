@@ -21,6 +21,7 @@ if 'api_key' not in st.session_state: st.session_state.api_key = ''
 if 'addresses' not in st.session_state: st.session_state.addresses = []
 if 'parcel_number' not in st.session_state: st.session_state.parcel_number = ''
 if 'pdf_bytes' not in st.session_state: st.session_state.pdf_bytes = None
+if 'is_collection_flow' not in st.session_state: st.session_state.is_collection_flow = False
 if 'last_request_shipment' not in st.session_state: st.session_state.last_request_shipment = None
 if 'last_response_shipment' not in st.session_state: st.session_state.last_response_shipment = None
 
@@ -70,18 +71,9 @@ st.divider()
 # --- KROK 2 & 3: FORMULÁŘ ---
 if st.session_state.addresses:
     
-    # Úprava poměru sloupců: pravý sloupec je teď širší kvůli mapě
     col_left, col_right = st.columns([4, 5], gap="large")
     
     with col_left:
-        st.header("2. Nastavení zásilky")
-        
-        address_dict = {str(a["it4emId"]): a for a in st.session_state.addresses}
-        selected_id_str = st.selectbox("Odesílatel (Svoz):", options=list(address_dict.keys()), format_func=lambda x: address_dict[x]["label"])
-        active_dsw = address_dict[selected_id_str]["dsw"]
-        active_it4emId = address_dict[selected_id_str]["it4emId"]
-        
-        st.markdown("<br>", unsafe_allow_html=True)
         
         service_options = {
             "CLASSIC": "Classic (B2B)",
@@ -89,10 +81,28 @@ if st.session_state.addresses:
             "PICKUP": "Pickup (Pudo)",
             "SHOP_TO_SHOP": "Shop to Shop",
             "SHOP_TO_HOME": "Shop to Home",
-            "RETURN": "DPD Return"
+            "RETURN": "Return (Vratka)",
+            "COLLECTION": "Collection (Vnitrostátní svoz)",
+            "IMPORT": "Import (Zahraniční svoz)"
         }
         
+        st.header("2. Služby a typ zásilky")
         service_type = st.radio("Zvolte produkt / službu:", options=list(service_options.keys()), format_func=lambda x: service_options[x], horizontal=True)
+        
+        # --- DETEKCE OBRÁCENÉHO TOKU ---
+        is_reverse_flow = service_type in ["RETURN", "COLLECTION", "IMPORT"]
+        
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        if is_reverse_flow:
+            st.info("🔄 **Obrácený tok:** Vaše registrovaná adresa (níže) slouží jako **PŘÍJEMCE** zásilky.")
+        else:
+            st.info("📍 **Standardní tok:** Vaše registrovaná adresa (níže) slouží jako **ODESÍLATEL** zásilky.")
+
+        address_dict = {str(a["it4emId"]): a for a in st.session_state.addresses}
+        selected_id_str = st.selectbox("Vaše adresa (z DPD profilu):", options=list(address_dict.keys()), format_func=lambda x: address_dict[x]["label"])
+        active_dsw = address_dict[selected_id_str]["dsw"]
+        active_it4emId = address_dict[selected_id_str]["it4emId"]
         
         # Vícekusová zásilka (MPS)
         st.markdown("<br>", unsafe_allow_html=True)
@@ -111,7 +121,13 @@ if st.session_state.addresses:
                 cod_vs = st.text_input("Variabilní symbol (nepovinné):")
 
         st.markdown("<br>", unsafe_allow_html=True)
-        st.header("3. Detaily příjemce")
+        
+        # Dynamický nadpis podle toku
+        if is_reverse_flow:
+            st.header("3. Adresa pro VYZVEDNUTÍ (Kde je balík nyní)")
+        else:
+            st.header("3. Adresa pro DORUČENÍ (Kam balík míří)")
+            
         r_name = st.text_input("Jméno a příjmení / Firma:", "Jan Novák")
         
         col_c1, col_c2 = st.columns(2)
@@ -137,18 +153,18 @@ if st.session_state.addresses:
             pickup_id = st.text_input("ID výdejního místa:")
             
             with st.expander("🌍 Zobrazit DPD Mapu", expanded=True):
-                # Větší iframe (výška 700) pro lepší ovladatelnost
                 components.iframe("https://api.dpd.cz/widget/latest/demo.html", height=700, scrolling=True)
         else:
             st.info("Zvolená služba nevyžaduje výběr výdejního místa z mapy.")
         
         st.markdown("<br><br>", unsafe_allow_html=True)
         
-        # --- ODESLÁNÍ DO API (Hned po ruce vpravo) ---
-        if st.button("🚀 Odeslat zásilku a vygenerovat štítek", type="primary", use_container_width=True):
+        # --- ODESLÁNÍ DO API ---
+        if st.button("🚀 Odeslat / Objednat zásilku", type="primary", use_container_width=True):
             # Pročištění starých dat
             st.session_state.pdf_bytes = None
             st.session_state.parcel_number = ""
+            st.session_state.is_collection_flow = False
 
             if service_type in ["PICKUP", "SHOP_TO_SHOP"] and not pickup_id.strip():
                 st.error("Pro tuto službu musíte zadat ID výdejního místa!")
@@ -159,41 +175,48 @@ if st.session_state.addresses:
             elif country_code == "HU": currency = "HUF"
             elif country_code == "RO": currency = "RON"
 
-            current_shipment_type = "Return" if service_type == "RETURN" else "Standard"
+            # Dynamické mapování typu zásilky
+            current_shipment_type = "Standard"
+            if service_type == "RETURN": current_shipment_type = "Return"
+            elif service_type == "COLLECTION": current_shipment_type = "Collection"
+            elif service_type == "IMPORT": current_shipment_type = "Import"
 
-            # Tvorba MPS polí (Vícekusová zásilka)
-            # Přidává referenci na každý jednotlivý balík
-            parcels_list = []
-            for _ in range(int(parcel_count)):
-                parcels_list.append({
-                    "references": {"ref1": ref1},
-                    "weightGrams": 1500
-                })
+            # MPS
+            parcels_list = [{"references": {"ref1": ref1}, "weightGrams": 1500} for _ in range(int(parcel_count))]
 
+            # --- OTOČENÍ ADRES ---
+            manual_address_payload = {
+                "info": {
+                    "name1": r_name, "name2": "",
+                    "contact": {"person": r_name, "phone": r_phone, "email": r_email}
+                },
+                "address": {
+                    "street": r_street, "postalCode": r_zip, "city": r_city,
+                    "houseNumber": r_house, "country": {"isoAlpha2": country_code}
+                }
+            }
+            registered_address_payload = {"it4emId": int(active_it4emId)}
+
+            if is_reverse_flow:
+                sender_payload = manual_address_payload
+                receiver_payload = registered_address_payload
+            else:
+                sender_payload = registered_address_payload
+                receiver_payload = manual_address_payload
+
+            # Sestavení Payloadu
             payload = [{
                 "customer": {"dsw": str(active_dsw)},
                 "deliveryOptions": {"completeness": "CompleteOnly"},
                 "shipmentType": current_shipment_type,
-                "sender": {"it4emId": int(active_it4emId)},
-                "receiver": {
-                    "info": {
-                        "name1": r_name,
-                        "name2": "",
-                        "contact": {"person": r_name, "phone": r_phone, "email": r_email}
-                    },
-                    "address": {
-                        "street": r_street,
-                        "postalCode": r_zip,
-                        "city": r_city,
-                        "houseNumber": r_house,
-                        "country": {"isoAlpha2": country_code}
-                    }
-                },
+                "sender": sender_payload,
+                "receiver": receiver_payload,
                 "references": {"ref1": ref1, "ref2": "", "ref3": "", "ref4": ""},
                 "parcels": parcels_list,
                 "services": {}
             }]
             
+            # Služby
             serv_obj = {}
             if service_type == "PRIVATE":
                 serv_obj["notification"] = True
@@ -214,17 +237,17 @@ if st.session_state.addresses:
             elif service_type == "RETURN":
                 serv_obj["dpdReturn"] = True
 
+            # Dobírka s fixním CASH_OR_CARD
             if cod_enabled:
                 serv_obj["cashOnDelivery"] = {
                     "amountCents": int(float(cod_amount) * 100),
                     "currency": currency,
-                    "payment": "Cash"
+                    "payment": "CASH_OR_CARD"
                 }
                 if cod_vs.strip():
                     serv_obj["cashOnDelivery"]["variableSymbol"] = cod_vs.strip()
 
             payload[0]["services"] = serv_obj
-            
             st.session_state.last_request_shipment = payload
             headers = {"x-api-key": st.session_state.api_key, "Content-Type": "application/json"}
             
@@ -265,28 +288,37 @@ if st.session_state.addresses:
                         
                     st.session_state.parcel_number = p_number
                     
-                    # Štítek
-                    label_payload = {"printType": "PDF", "printProperties": {"pageSize": "A6", "labelsPerPage": 1}, "parcels": [{"parcelNumber": str(p_number)}]}
-                    label_res = requests.post(f"{API_BASE}/v1/parcels/labels", headers=headers, json=label_payload)
-                    
-                    if label_res.status_code not in [200, 201]:
-                        st.error("Štítek se nepodařilo stáhnout.")
-                        st.stop()
-                        
-                    if 'application/pdf' in label_res.headers.get('Content-Type', '').lower() or label_res.content.startswith(b'%PDF'):
-                        st.session_state.pdf_bytes = label_res.content
+                    # Logika pro přeskočení štítku u svozů
+                    if service_type in ["COLLECTION", "IMPORT"]:
+                        st.session_state.is_collection_flow = True
                     else:
-                        label_data = label_res.json()
-                        content = label_data.get("labels", [{}])[0].get("content", label_data.get("content", ""))
-                        st.session_state.pdf_bytes = base64.b64decode(content) if content else None
+                        st.session_state.is_collection_flow = False
+                        label_payload = {"printType": "PDF", "printProperties": {"pageSize": "A6", "labelsPerPage": 1}, "parcels": [{"parcelNumber": str(p_number)}]}
+                        label_res = requests.post(f"{API_BASE}/v1/parcels/labels", headers=headers, json=label_payload)
+                        
+                        if label_res.status_code not in [200, 201]:
+                            st.error("Štítek se nepodařilo stáhnout, zásilka je ale v pořádku založena.")
+                            st.stop()
+                            
+                        if 'application/pdf' in label_res.headers.get('Content-Type', '').lower() or label_res.content.startswith(b'%PDF'):
+                            st.session_state.pdf_bytes = label_res.content
+                        else:
+                            label_data = label_res.json()
+                            content = label_data.get("labels", [{}])[0].get("content", label_data.get("content", ""))
+                            st.session_state.pdf_bytes = base64.b64decode(content) if content else None
                         
                 except Exception as e:
                     st.error(f"Chyba systému: {str(e)}")
 
-        # Výsledek a stažení štítku (Nyní umístěno hned pod odesílacím tlačítkem v pravém sloupci)
-        if st.session_state.pdf_bytes:
-            st.success(f"✅ Zásilka **{st.session_state.parcel_number}** vytvořena!")
-            st.download_button("📄 Stáhnout PDF Štítek", data=st.session_state.pdf_bytes, file_name=f"DPD_{st.session_state.parcel_number}.pdf", mime="application/pdf", use_container_width=True)
+        # --- ZOBRAZENÍ VÝSLEDKŮ ---
+        if st.session_state.parcel_number:
+            st.divider()
+            st.success(f"✅ Zásilka **{st.session_state.parcel_number}** byla v pořádku založena!")
+            
+            if st.session_state.is_collection_flow:
+                st.info("🚛 **Svoz byl objednán.** U služeb Collection / Import generuje štítek samotný kurýr při vyzvednutí balíku, proto zde není PDF ke stažení.")
+            elif st.session_state.pdf_bytes:
+                st.download_button("📄 Stáhnout PDF Štítek", data=st.session_state.pdf_bytes, file_name=f"DPD_{st.session_state.parcel_number}.pdf", mime="application/pdf", use_container_width=True)
 
 # --- DEBUGGING ---
 if st.session_state.last_request_shipment:
