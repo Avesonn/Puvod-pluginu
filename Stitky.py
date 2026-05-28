@@ -9,6 +9,43 @@ API_BASE = "https://geoapi-test.dpd.cz"
 
 st.set_page_config(page_title="DPD GeoAPI 2.0 Dashboard", layout="wide")
 
+# --- VLASTNÍ DPD CSS STYLY ---
+# Tento blok změní obyčejná zaškrtávátka na červené DPD dlaždice podle tvého screenu
+st.markdown("""
+<style>
+div[role="radiogroup"] {
+    gap: 10px;
+}
+div[role="radiogroup"] > label {
+    border: 1.5px solid #dc0032 !important; /* DPD Červená */
+    border-radius: 25px !important;
+    padding: 10px 20px !important;
+    background-color: white !important;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+div[role="radiogroup"] > label:hover {
+    background-color: #fff0f2 !important;
+}
+div[role="radiogroup"] > label[data-checked="true"] {
+    background-color: #dc0032 !important;
+}
+div[role="radiogroup"] > label[data-checked="true"] p {
+    color: white !important;
+}
+div[role="radiogroup"] > label p {
+    color: #dc0032 !important;
+    font-weight: 500 !important;
+    font-size: 15px !important;
+    margin: 0 !important;
+}
+/* Skrytí ošklivého defaultního kroužku pro radio button */
+div[role="radiogroup"] > label div[data-baseweb="radio"] {
+    display: none !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
 COUNTRIES = {
     "Česká republika": "CZ", "Slovensko": "SK", "Německo": "DE", 
     "Polsko": "PL", "Rakousko": "AT", "Maďarsko": "HU", 
@@ -34,7 +71,8 @@ st.markdown("Kompletní testovací rozhraní pro GeoAPI 2.0")
 
 # --- POMOCNÁ FUNKCE PRO BEZPEČNÉ PARSOVÁNÍ ODPOVĚDI ---
 def safe_response_parse(response):
-    if not response:
+    # Oprava! Zde musí být `is None` aby nám neutíkaly chybové JSONy (400, 404 atd.)
+    if response is None:
         return "Prázdná odpověď od serveru."
     if isinstance(response, str):
         text = response
@@ -137,18 +175,25 @@ if st.session_state.addresses:
         
         st.markdown("<br>", unsafe_allow_html=True)
         
+        # Názvy zde musí sedět s tím, co uživatel uvidí ve stylizovaných "pilulkách"
         service_options = {
-            "CLASSIC": "Classic (B2B)",
-            "PRIVATE": "Private (B2C)",
-            "PICKUP": "Pickup (Pudo)",
-            "SHOP_TO_SHOP": "Shop to Shop",
-            "SHOP_TO_HOME": "Shop to Home",
+            "CLASSIC": "DPD Classic",
+            "PRIVATE": "DPD Private",
+            "PICKUP": "DPD Pickup (Výdejní místa a Boxy)",
+            "SHOP_TO_SHOP": "DPD Shop2Shop",
+            "SHOP_TO_HOME": "DPD Shop2Home",
             "RETURN": "Return (Vratka)",
             "COLLECTION_IMPORT": "Svoz k nám (Collection / Import)",
-            "THIRDPARTY_COLLECTION": "Svoz třetí straně (ThirdParty Collection)"
+            "THIRDPARTY_COLLECTION": "Svoz třetí straně"
         }
         
-        service_type = st.radio("Zvolte produkt / službu:", options=list(service_options.keys()), format_func=lambda x: service_options[x], horizontal=True)
+        # Toto radio se nyní díky CSS nahoře vykreslí jako DPD dlaždice z tvého screenu
+        service_type = st.radio(
+            "Zvolte produkt / službu:", 
+            options=list(service_options.keys()), 
+            format_func=lambda x: service_options[x], 
+            horizontal=True
+        )
         
         # --- DEFINICE TOKU ---
         is_reverse_flow = service_type in ["RETURN", "COLLECTION_IMPORT"]
@@ -317,13 +362,11 @@ if st.session_state.addresses:
                     if ship_res.status_code not in [200, 201] or not isinstance(ship_data, (dict, list)):
                         st.error(f"❌ DPD API zamítlo požadavek (Kód {ship_res.status_code})")
                         
-                        # Opravené zobrazení chyby - nepadá na parsování
                         if isinstance(ship_data, (dict, list)):
                             st.json(ship_data)
                         else:
                             st.code(str(ship_data))
                             
-                        # Okamžitý výpis odeslaného Payloadu pro ladění před zastavením skriptu
                         with st.expander("🛠️ Zobrazit odeslaný Request (Pro ladění):", expanded=True):
                             st.json(payload)
                             
@@ -425,15 +468,18 @@ if st.session_state.addresses:
                 if st.button("Objednat svoz u DPD pro tuto zásilku", type="primary", use_container_width=True):
                     with st.spinner("Objednávám svoz na serveru..."):
                         headers = {"x-api-key": st.session_state.api_key, "Content-Type": "application/json"}
+                        
+                        # Opravený payload pro svoz podle dokumentace!
                         pickup_payload = [
-    {
-        "parcel": {
-            "parcelNumber": str(st.session_state.parcel_number)
-        }
-    }
-]
+                            {
+                                "parcel": {
+                                    "parcelNumber": str(st.session_state.parcel_number)
+                                }
+                            }
+                        ]
+                        
                         try:
-                            pick_res = requests.post(f"{API_BASE}/v1/pickups", headers=headers, json=pickup_payload)
+                            pick_res = requests.post(f"{API_BASE}/v1/pickup-orders", headers=headers, json=pickup_payload)
                             pickup_data = safe_response_parse(pick_res)
                             st.session_state.last_pickup_response = pickup_data
                                 
