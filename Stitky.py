@@ -7,10 +7,8 @@ import re
 
 API_BASE = "https://geoapi-test.dpd.cz"
 
-# --- NASTAVENÍ STRÁNKY ---
 st.set_page_config(page_title="DPD GeoAPI 2.0 Dashboard", layout="wide")
 
-# Seznam států pro našeptávač
 COUNTRIES = {
     "Česká republika": "CZ", "Slovensko": "SK", "Německo": "DE", 
     "Polsko": "PL", "Rakousko": "AT", "Maďarsko": "HU", 
@@ -19,7 +17,6 @@ COUNTRIES = {
     "Nizozemsko": "NL", "Belgie": "BE", "Bulharsko": "BG"
 }
 
-# --- INICIALIZACE SESSION STATE ---
 if 'api_key' not in st.session_state: st.session_state.api_key = ''
 if 'addresses' not in st.session_state: st.session_state.addresses = []
 if 'parcel_number' not in st.session_state: st.session_state.parcel_number = ''
@@ -65,21 +62,20 @@ if btn_login:
                     st.success(f"Úspěšně načteno! Nalezeno {len(parsed_addresses)} svozových adres.")
                 else:
                     st.error(f"Chyba při volání /me (HTTP {response.status_code})")
-                    st.json(response.json())
             except Exception as e:
                 st.error(f"Chyba: {str(e)}")
 
 st.divider()
 
-# --- KROK 2 & 3: FORMULÁŘ ZÁSILKY ---
+# --- KROK 2 & 3: FORMULÁŘ ---
 if st.session_state.addresses:
     
-    col_left, col_right = st.columns([1, 1], gap="large")
+    # Úprava poměru sloupců: pravý sloupec je teď širší kvůli mapě
+    col_left, col_right = st.columns([4, 5], gap="large")
     
     with col_left:
         st.header("2. Nastavení zásilky")
         
-        # Výběr svozové adresy
         address_dict = {str(a["it4emId"]): a for a in st.session_state.addresses}
         selected_id_str = st.selectbox("Odesílatel (Svoz):", options=list(address_dict.keys()), format_func=lambda x: address_dict[x]["label"])
         active_dsw = address_dict[selected_id_str]["dsw"]
@@ -87,7 +83,6 @@ if st.session_state.addresses:
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Dlaždice pro výběr služby
         service_options = {
             "CLASSIC": "Classic (B2B)",
             "PRIVATE": "Private (B2C)",
@@ -97,21 +92,23 @@ if st.session_state.addresses:
             "RETURN": "DPD Return"
         }
         
-        service_type = st.radio(
-            "Zvolte produkt / službu:", 
-            options=list(service_options.keys()), 
-            format_func=lambda x: service_options[x],
-            horizontal=True
-        )
+        service_type = st.radio("Zvolte produkt / službu:", options=list(service_options.keys()), format_func=lambda x: service_options[x], horizontal=True)
         
+        # Vícekusová zásilka (MPS)
         st.markdown("<br>", unsafe_allow_html=True)
-        
-        # Nastavení Dobírky (COD)
+        parcel_count = st.number_input("Počet balíků (Vícekusová zásilka):", min_value=1, max_value=50, value=1)
+
+        # Dobírka
+        st.markdown("<br>", unsafe_allow_html=True)
         cod_enabled = st.checkbox("💸 Odeslat na dobírku (COD)")
         cod_amount = 0.0
+        cod_vs = ""
         if cod_enabled:
-            st.info("Měna se nastaví automaticky podle vybraného státu příjemce. Částka se do API odešle správně převedená na nejmenší jednotky (haléře/centy).")
-            cod_amount = st.number_input("Částka dobírky:", min_value=0.0, step=10.0, value=1000.0)
+            col_cod1, col_cod2 = st.columns(2)
+            with col_cod1:
+                cod_amount = st.number_input("Částka dobírky:", min_value=0.0, step=10.0, value=1000.0)
+            with col_cod2:
+                cod_vs = st.text_input("Variabilní symbol (nepovinné):")
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.header("3. Detaily příjemce")
@@ -130,43 +127,49 @@ if st.session_state.addresses:
         country_name = st.selectbox("Stát:", options=list(COUNTRIES.keys()))
         country_code = COUNTRIES[country_name]
         
-        ref1 = st.text_input("Reference 1 (např. číslo objednávky):", "OBJ-2026-999")
+        ref1 = st.text_input("Reference 1 (číslo objednávky - propíše se i na balíky):", "OBJ-2026-999")
 
     with col_right:
         pickup_id = ""
-        # Widget zobrazený pouze pro služby s výdejním místem
         if service_type in ["PICKUP", "SHOP_TO_SHOP"]:
             st.header("📍 Výdejní místo")
-            st.markdown("""
-            1. **Najděte pobočku** na mapě níže.
-            2. **Zkopírujte ID** (např. CZ12345) z pole pod mapou.
-            3. **Vložte ho do bílého pole** výše (našeptávač text sám promaže).
-            """)
+            st.markdown("Najděte pobočku na mapě, zkopírujte její ID (z pole pod mapou) a vložte ho do bílého pole.")
             pickup_id = st.text_input("ID výdejního místa:")
             
             with st.expander("🌍 Zobrazit DPD Mapu", expanded=True):
-                components.iframe("https://api.dpd.cz/widget/latest/demo.html", height=500, scrolling=True)
+                # Větší iframe (výška 700) pro lepší ovladatelnost
+                components.iframe("https://api.dpd.cz/widget/latest/demo.html", height=700, scrolling=True)
         else:
             st.info("Zvolená služba nevyžaduje výběr výdejního místa z mapy.")
         
         st.markdown("<br><br>", unsafe_allow_html=True)
         
-        # --- ODESLÁNÍ DO API ---
+        # --- ODESLÁNÍ DO API (Hned po ruce vpravo) ---
         if st.button("🚀 Odeslat zásilku a vygenerovat štítek", type="primary", use_container_width=True):
+            # Pročištění starých dat
+            st.session_state.pdf_bytes = None
+            st.session_state.parcel_number = ""
+
             if service_type in ["PICKUP", "SHOP_TO_SHOP"] and not pickup_id.strip():
                 st.error("Pro tuto službu musíte zadat ID výdejního místa!")
                 st.stop()
                 
-            # Automatika měn
             currency = "EUR"
             if country_code == "CZ": currency = "CZK"
             elif country_code == "HU": currency = "HUF"
             elif country_code == "RO": currency = "RON"
 
-            # Určení typu zásilky (Return má vlastní ShipmentType)
             current_shipment_type = "Return" if service_type == "RETURN" else "Standard"
 
-            # Základní kostra požadavku
+            # Tvorba MPS polí (Vícekusová zásilka)
+            # Přidává referenci na každý jednotlivý balík
+            parcels_list = []
+            for _ in range(int(parcel_count)):
+                parcels_list.append({
+                    "references": {"ref1": ref1},
+                    "weightGrams": 1500
+                })
+
             payload = [{
                 "customer": {"dsw": str(active_dsw)},
                 "deliveryOptions": {"completeness": "CompleteOnly"},
@@ -187,43 +190,38 @@ if st.session_state.addresses:
                     }
                 },
                 "references": {"ref1": ref1, "ref2": "", "ref3": "", "ref4": ""},
-                "parcels": [{"references": {"ref1": ref1}, "weightGrams": 1500}],
+                "parcels": parcels_list,
                 "services": {}
             }]
             
-            # Objekt Services naplněný přesně dle oficiální dokumentace DPD GeoAPI
             serv_obj = {}
-            
             if service_type == "PRIVATE":
                 serv_obj["notification"] = True
-                
             elif service_type == "PICKUP":
                 clean_id = pickup_id.strip()
                 match = re.search(r'([a-zA-Z]{2}\d+)', clean_id)
                 if match: clean_id = match.group(1).upper()
                 serv_obj["notification"] = True
                 serv_obj["pickupPoint"] = clean_id
-                
             elif service_type == "SHOP_TO_SHOP":
                 clean_id = pickup_id.strip()
                 match = re.search(r'([a-zA-Z]{2}\d+)', clean_id)
                 if match: clean_id = match.group(1).upper()
                 serv_obj["shopToShop"] = True
                 serv_obj["pickupPoint"] = clean_id
-                
             elif service_type == "SHOP_TO_HOME":
                 serv_obj["shopToHome"] = True
-                
             elif service_type == "RETURN":
                 serv_obj["dpdReturn"] = True
 
-            # Správně naformátovaná dobírka (nově CashOnDelivery s amountCents)
             if cod_enabled:
                 serv_obj["cashOnDelivery"] = {
                     "amountCents": int(float(cod_amount) * 100),
                     "currency": currency,
                     "payment": "Cash"
                 }
+                if cod_vs.strip():
+                    serv_obj["cashOnDelivery"]["variableSymbol"] = cod_vs.strip()
 
             payload[0]["services"] = serv_obj
             
@@ -245,7 +243,6 @@ if st.session_state.addresses:
                         st.json(ship_data)
                         st.stop()
                     
-                    # Chytré hledání čísla balíku
                     def find_parcel_number(d):
                         if isinstance(d, dict):
                             if "parcelNumbers" in d and isinstance(d["parcelNumbers"], dict) and "main" in d["parcelNumbers"]:
@@ -263,17 +260,17 @@ if st.session_state.addresses:
                     
                     p_number = find_parcel_number(ship_data)
                     if not p_number:
-                        st.error("Zásilka byla založena, ale číslo zásilky nebylo nalezeno.")
+                        st.error("Zásilka byla založena, ale číslo nebylo nalezeno.")
                         st.stop()
                         
                     st.session_state.parcel_number = p_number
                     
-                    # Generování PDF štítku
+                    # Štítek
                     label_payload = {"printType": "PDF", "printProperties": {"pageSize": "A6", "labelsPerPage": 1}, "parcels": [{"parcelNumber": str(p_number)}]}
                     label_res = requests.post(f"{API_BASE}/v1/parcels/labels", headers=headers, json=label_payload)
                     
                     if label_res.status_code not in [200, 201]:
-                        st.error("Štítek se nepodařilo stáhnout. Zásilka ale byla založena.")
+                        st.error("Štítek se nepodařilo stáhnout.")
                         st.stop()
                         
                     if 'application/pdf' in label_res.headers.get('Content-Type', '').lower() or label_res.content.startswith(b'%PDF'):
@@ -286,17 +283,16 @@ if st.session_state.addresses:
                 except Exception as e:
                     st.error(f"Chyba systému: {str(e)}")
 
-# --- KROK 4: VÝSLEDEK ---
-if st.session_state.pdf_bytes:
-    st.divider()
-    st.success(f"✅ Zásilka **{st.session_state.parcel_number}** byla úspěšně vygenerována!")
-    st.download_button("📄 Stáhnout PDF Štítek", data=st.session_state.pdf_bytes, file_name=f"DPD_{st.session_state.parcel_number}.pdf", mime="application/pdf")
+        # Výsledek a stažení štítku (Nyní umístěno hned pod odesílacím tlačítkem v pravém sloupci)
+        if st.session_state.pdf_bytes:
+            st.success(f"✅ Zásilka **{st.session_state.parcel_number}** vytvořena!")
+            st.download_button("📄 Stáhnout PDF Štítek", data=st.session_state.pdf_bytes, file_name=f"DPD_{st.session_state.parcel_number}.pdf", mime="application/pdf", use_container_width=True)
 
-# --- DEBUGGING (Technický detail) ---
+# --- DEBUGGING ---
 if st.session_state.last_request_shipment:
     st.divider()
-    with st.expander("🛠️ Technický detail (Odeslaný Request a Response)"):
-        st.write("**Odeslaný Payload (do API):**")
+    with st.expander("🛠️ Technický detail (Request / Response)"):
+        st.write("**Odeslaný Payload:**")
         st.json(st.session_state.last_request_shipment)
-        st.write("**Odpověď od DPD API:**")
+        st.write("**Odpověď API:**")
         st.json(st.session_state.last_response_shipment)
