@@ -116,6 +116,8 @@ def get_human_error_message(err_data):
         return "dpostcode not matching with country pattern NNNN - špatně zadaná adresa příjemce, konkrétně máte špatné PSČ."
     elif "Could not get routing data" in err_str:
         return "Could not get routing data - Je zvolená neplatná kombinace služeb, DPD tuto službu do dané země v API neposkytuje."
+    elif "InvalidServiceCombination" in err_str and "DpdPneu" in err_str:
+        return "Chybí povinná kombinace služeb. Služba DPD Pneu musí být pro úspěšné vytvoření odeslána společně s Notifikací příjemci."
         
     return None
 
@@ -197,13 +199,12 @@ st.divider()
 
 if st.session_state.addresses:
     
-    # --- KROK 2 A 3: DVOU-SLOUPCOVÝ LAYOUT (ADRESY VLEVO, SLUŽBY VPRAVO) ---
+    # --- KROK 2 A 3: DVOU-SLOUPCOVÝ LAYOUT ---
     col_left, col_right = st.columns([1, 1], gap="large")
     
     with col_left:
         st.header("2. Adresy účastníků přepravy")
         
-        # Odesílatel z profilu DSW
         st.markdown("### Vaše adresa (Registrovaný odesílatel z DPD profilu)")
         address_dict = {str(a["it4emId"]): a for a in st.session_state.addresses}
         selected_id_str = st.selectbox("Vyberte adresu z profilu:", options=list(address_dict.keys()), format_func=lambda x: address_dict[x]["label"])
@@ -211,11 +212,7 @@ if st.session_state.addresses:
         active_it4emId = address_dict[selected_id_str]["it4emId"]
         
         st.markdown("<hr>", unsafe_allow_html=True)
-        
-        # Zákazník (Příjemce)
         manual_address_data, dest_country_code = render_address_block("cust", "Adresa Zákazníka / Protistrany")
-        
-        # Prostor pro případnou třetí stranu (Svoz)
         extra_address_placeholder = st.empty()
 
     with col_right:
@@ -230,7 +227,6 @@ if st.session_state.addresses:
             "THIRDPARTY_COLLECTION": "Svoz třetí straně"
         }
         
-        # Filtrování služeb podle zvoleného státu u zákazníka
         filtered_keys = [k for k, v in all_service_options.items() if dest_country_code in ALLOWED_COUNTRIES.get(k, [])]
         available_services = {k: all_service_options[k] for k in filtered_keys}
         
@@ -240,7 +236,6 @@ if st.session_state.addresses:
             
         service_type = st.radio("Dostupné produkty pro vybraný stát:", options=list(available_services.keys()), format_func=lambda x: available_services[x], horizontal=True)
         
-        # Určení toku dat
         is_reverse_flow = service_type in ["RETURN", "COLLECTION_IMPORT"]
         is_third_party_flow = service_type == "THIRDPARTY_COLLECTION"
         is_normal_flow = not is_reverse_flow and not is_third_party_flow
@@ -256,7 +251,6 @@ if st.session_state.addresses:
                 manual_receiver_tp, tp_country_code = render_address_block("rec_tp", "Adresa Příjemce (Třetí strana)")
                 dest_country_code = tp_country_code
         
-        # Bezštítkový Return (PIN)
         return_mode = "LABEL"
         if service_type == "RETURN":
             return_mode = st.radio("Režim vratky:", options=["LABEL", "DROP_OFF_CODE"], format_func=lambda x: "🖨️ Papírový štítek (PDF)" if x == "LABEL" else "📱 Bezštítkové podání (PIN + Aztec)", horizontal=True)
@@ -269,7 +263,6 @@ if st.session_state.addresses:
             cod_enabled = st.checkbox("💸 Dobírka (COD)")
             
         with col_srv2: 
-            # SWAP Omezení: Classic, Private, Guarantee, DPD12, DPDDnes pouze v ČR
             if service_type in ["CLASSIC", "PRIVATE", "GUARANTEE", "DPD12", "DPDDNES"] and dest_country_code == "CZ":
                 swap_enabled = st.checkbox("🔄 Výměnný balík")
             else:
@@ -278,13 +271,11 @@ if st.session_state.addresses:
         with col_srv3: 
             ins_enabled = st.checkbox("🛡️ Připojištění")
             
-        # ID Check Omezení: Classic, Private, DPD12 pouze v ČR
         if service_type in ["CLASSIC", "PRIVATE", "DPD12"] and dest_country_code == "CZ":
             id_check = st.checkbox("👤 Ověření dokladu (ID Check)")
         else:
             id_check = False
         
-        # Výchozí hodnoty pro doplňky
         cod_amount = 0.0
         cod_vs = ""
         ins_amount = 0.0
@@ -310,7 +301,6 @@ if st.session_state.addresses:
 
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Uzamknutí MPS (Vícekusu)
         disable_mps = False
         if service_type in ["PICKUP", "SHOP_TO_SHOP", "SHOP_TO_HOME", "RETURN", "COLLECTION_IMPORT", "THIRDPARTY_COLLECTION"] or swap_enabled:
             disable_mps = True
@@ -323,7 +313,6 @@ if st.session_state.addresses:
             
         col_w, col_r = st.columns(2)
         with col_w:
-            # Maximální váha dle služby
             if service_type in ["PICKUP", "SHOP_TO_SHOP", "SHOP_TO_HOME"]:
                 max_w = 20.0
             else:
@@ -335,7 +324,7 @@ if st.session_state.addresses:
         with col_r:
             ref1 = st.text_input("Reference zásilky (objednávka):", "OBJ-2026-999")
 
-    # --- KROK 4: SPODNÍ BLOK PŘES CELOU ŠÍŘKU (MAPA, TLAČÍTKO, VÝSLEDKY) ---
+    # --- KROK 4: SPODNÍ BLOK ---
     st.markdown("<hr style='border: 2px solid #dc0032;'>", unsafe_allow_html=True)
     
     pickup_id = ""
@@ -349,7 +338,6 @@ if st.session_state.addresses:
     # --- ODESLÁNÍ DO API ---
     if st.button("🚀 Odeslat a vytvořit zásilku v DPD", type="primary", use_container_width=True):
         
-        # Reset proměnných v session state před novým voláním
         st.session_state.pdf_bytes = None
         st.session_state.parcel_number = ""
         st.session_state.dropoff_pin = ""
@@ -363,7 +351,6 @@ if st.session_state.addresses:
             st.error("Musíte vyplnit ID výdejního místa z mapy!")
             st.stop()
             
-        # Přiřazení měny k dobírce a pojištění na základě destinace
         currency = "EUR"
         if dest_country_code == "CZ": 
             currency = "CZK"
@@ -372,7 +359,6 @@ if st.session_state.addresses:
         elif dest_country_code == "RO": 
             currency = "RON"
 
-        # Překlad služby do DPD shipmentType
         current_shipment_type = "Standard"
         if service_type == "RETURN": 
             current_shipment_type = "Return"
@@ -384,7 +370,6 @@ if st.session_state.addresses:
             else:
                 current_shipment_type = "Import"
 
-        # Mapování Odesílatele a Příjemce na základě toku
         registered_address_payload = {"it4emId": int(active_it4emId)}
         
         if is_normal_flow:
@@ -397,11 +382,9 @@ if st.session_state.addresses:
             sender_payload = manual_address_data
             receiver_payload = manual_receiver_tp
 
-        # Sestavení balíků
         weight_grams = int(parcel_weight_kg * 1000)
         parcels_list = [{"references": {"ref1": ref1}, "weightGrams": weight_grams} for _ in range(int(parcel_count))]
 
-        # Sestavení hlavního Payloadu
         payload = [{
             "customer": {"dsw": str(active_dsw)}, 
             "deliveryOptions": {"completeness": "CompleteOnly"},
@@ -413,7 +396,6 @@ if st.session_state.addresses:
             "services": {}
         }]
         
-        # Konfigurace DPD Služeb do JSONu
         serv_obj = {}
         if service_type == "PRIVATE": 
             serv_obj["notification"] = True
@@ -423,6 +405,7 @@ if st.session_state.addresses:
             serv_obj["airExpress"] = True
         elif service_type == "PNEU": 
             serv_obj["dpdPneu"] = True
+            serv_obj["notification"] = True # OPRAVA: Pneu vyžaduje notifikaci
         elif service_type == "DPD12": 
             serv_obj["dpdTimeGuarantee"] = "DPD12"
         elif service_type == "DPDDNES": 
@@ -443,7 +426,6 @@ if st.session_state.addresses:
         elif service_type == "RETURN": 
             serv_obj["dpdReturn"] = True
 
-        # Doplňkové služby v JSONu
         if swap_enabled: 
             serv_obj["swap"] = True
             
@@ -472,7 +454,6 @@ if st.session_state.addresses:
         st.session_state.last_request_shipment = payload
         headers = {"x-api-key": st.session_state.api_key, "Content-Type": "application/json"}
         
-        # --- VOLÁNÍ SHIPMENTS API ---
         with st.spinner("Odesílám požadavek do DPD API..."):
             try:
                 ship_res = requests.post(f"{API_BASE}/v1/shipments", headers=headers, json=payload)
@@ -492,7 +473,6 @@ if st.session_state.addresses:
                         st.code(str(ship_data))
                     st.stop()
                 
-                # Vyhledání čísla balíku v JSON odpovědi
                 def get_p_num(d):
                     if isinstance(d, dict):
                         if "parcelNumbers" in d and "main" in d["parcelNumbers"]: 
@@ -515,7 +495,6 @@ if st.session_state.addresses:
                     
                 st.session_state.parcel_number = p_number
                 
-                # --- NÁSLEDNÉ AKCE (SVOZ / ŠTÍTKY / PIN) ---
                 if service_type in ["COLLECTION_IMPORT", "THIRDPARTY_COLLECTION"]:
                     st.session_state.needs_pickup_order = True
                     
@@ -590,10 +569,28 @@ if st.session_state.addresses:
                     else:
                         st.error("Nepodařilo se zarezervovat svoz u DPD.")
 
-# --- TECHNICKÝ LOG ---
+# --- TECHNICKÝ LOG A EXPORT ---
 if st.session_state.last_request_shipment:
     st.divider()
     with st.expander("🛠️ Technický detail komunikace (Pro vývojáře)"):
+        
+        # Generování JSON souboru pro export
+        export_data = {
+            "request_shipment": st.session_state.last_request_shipment,
+            "response_shipment": st.session_state.last_response_shipment,
+            "response_label": st.session_state.last_label_response,
+            "response_pickup": st.session_state.last_pickup_response
+        }
+        export_json = json.dumps(export_data, indent=4, ensure_ascii=False)
+        
+        st.download_button(
+            label="💾 Exportovat kompletní logy do JSON",
+            data=export_json,
+            file_name=f"DPD_Log_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json",
+            use_container_width=True
+        )
+        
         st.write("**Request Payload (do DPD API):**")
         st.json(st.session_state.last_request_shipment)
         st.write("**Response (Tvorba Zásilky):**")
