@@ -4,6 +4,7 @@ import requests
 import json
 import base64
 import re
+from datetime import datetime, timedelta
 
 API_BASE = "https://geoapi-test.dpd.cz"
 
@@ -239,15 +240,34 @@ if st.session_state.addresses:
                 cod_vs = st.text_input("Variabilní symbol:")
         
         st.markdown("<br>", unsafe_allow_html=True)
-        disable_mps = service_type in ["PICKUP", "SHOP_TO_SHOP", "RETURN", "COLLECTION_IMPORT", "THIRDPARTY_COLLECTION"] or swap_enabled
+        
+        # Omezení MPS podle služeb z HTML restrikcí
+        disable_mps = False
+        if service_type in ["PICKUP", "SHOP_TO_SHOP", "SHOP_TO_HOME", "RETURN", "COLLECTION_IMPORT", "THIRDPARTY_COLLECTION"] or swap_enabled:
+             disable_mps = True
+             
         if disable_mps:
             st.info("ℹ️ Pro vybranou kombinaci služeb není vícekusová zásilka povolena. Omezeno na 1 balík.")
             parcel_count = 1
         else:
             parcel_count = st.number_input("Počet balíků (Vícekusová zásilka):", min_value=1, max_value=50, value=1)
-
+            
+        # Váha a Reference
         st.markdown("<br>", unsafe_allow_html=True)
-        ref1 = st.text_input("Reference 1 (číslo objednávky - propíše se i na balíky):", "OBJ-2026-999")
+        col_w, col_r = st.columns(2)
+        with col_w:
+             # Defaultní váha dle služby na základě HTML
+             default_weight = 1.5
+             max_w = 31.5
+             if service_type in ["PICKUP", "SHOP_TO_SHOP", "SHOP_TO_HOME"]:
+                 max_w = 20.0
+                 st.info("Limit váhy: max. 20 kg")
+             else:
+                 st.info("Limit váhy: max. 31.5 kg")
+                 
+             parcel_weight_kg = st.number_input("Váha jednoho balíku (kg):", min_value=0.1, max_value=max_w, value=default_weight, step=0.5)
+        with col_r:
+             ref1 = st.text_input("Reference 1 (číslo objednávky - propíše se i na balíky):", "OBJ-2026-999")
 
     with col_right:
         pickup_id = ""
@@ -299,7 +319,8 @@ if st.session_state.addresses:
                 receiver_payload = manual_receiver
 
             final_parcel_count = 1 if disable_mps else int(parcel_count)
-            parcels_list = [{"references": {"ref1": ref1}, "weightGrams": 1500} for _ in range(final_parcel_count)]
+            weight_grams = int(parcel_weight_kg * 1000)
+            parcels_list = [{"references": {"ref1": ref1}, "weightGrams": weight_grams} for _ in range(final_parcel_count)]
 
             payload = [{
                 "customer": {"dsw": str(active_dsw)},
@@ -455,17 +476,36 @@ if st.session_state.addresses:
 
             if st.session_state.needs_pickup_order:
                 st.info("🚛 **Tento typ sběrné služby vyžaduje objednání fyzického svozu kurýrem.**")
+                
+                # Výběr data pro svoz
+                pickup_date = st.date_input("Zvolte požadované datum svozu:", min_value=datetime.today(), value=datetime.today() + timedelta(days=1))
+                pickup_note = st.text_input("Poznámka pro kurýra (např. 'Zvonit na sklad'):", max_chars=200)
+
                 if st.button("Objednat svoz u DPD pro tuto zásilku", type="primary", use_container_width=True):
                     with st.spinner("Objednávám svoz na serveru..."):
                         headers = {"x-api-key": st.session_state.api_key, "Content-Type": "application/json"}
-                        pickup_payload = [{"parcel": {"parcelNumber": str(st.session_state.parcel_number)}}]
+                        
+                        formatted_date = pickup_date.strftime("%Y-%m-%d")
+                        
+                        pickup_payload = [
+                            {
+                                "parcel": {
+                                    "parcelNumber": str(st.session_state.parcel_number)
+                                },
+                                "date": formatted_date
+                            }
+                        ]
+                        
+                        if pickup_note.strip():
+                            pickup_payload[0]["note"] = pickup_note.strip()
+
                         try:
                             pick_res = requests.post(f"{API_BASE}/v1/pickup-orders", headers=headers, json=pickup_payload)
                             pickup_data = safe_response_parse(pick_res)
                             st.session_state.last_pickup_response = pickup_data
                                 
                             if pick_res.status_code in [200, 201] and not (isinstance(pickup_data, str) and pickup_data.startswith("HTML_ERROR")):
-                                st.success("✅ Fyzický svoz kurýrem byl úspěšně objednán!")
+                                st.success(f"✅ Fyzický svoz kurýrem byl úspěšně objednán na datum {formatted_date}!")
                             else:
                                 st.error(f"❌ Chyba při objednání svozu (Kód {pick_res.status_code})")
                                 if isinstance(pickup_data, (dict, list)): st.json(pickup_data)
