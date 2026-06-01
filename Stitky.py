@@ -878,14 +878,16 @@ elif menu_selection == "🔍 Historie a Tracking":
                         p_load = []
                         for p in selected_for_pickup:
                             payload_item = {
-                                "parcelNumber": p,
+                                "parcel": {
+                                    "parcelNumber": p
+                                },
                                 "date": date.strftime("%Y-%m-%d")
                             }
                             if note.strip():
                                 payload_item["note"] = note.strip()
                             p_load.append(payload_item)
                             
-                        # Uložení Payloadu do logu (Opraveno)
+                        # Uložení Payloadu do logu
                         st.session_state.last_request_pickup = p_load
                         
                         headers = {
@@ -932,7 +934,7 @@ elif menu_selection == "🚚 Správa svozů":
                 if note.strip(): 
                     p_load[0]["note"] = note.strip()
                     
-                # Uložení Payloadu do logu (Opraveno)
+                # Uložení Payloadu do logu
                 st.session_state.last_request_pickup = p_load
                 
                 headers = {
