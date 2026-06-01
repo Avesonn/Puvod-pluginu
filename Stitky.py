@@ -96,7 +96,7 @@ ALLOWED_COUNTRIES = {
     "THIRDPARTY_COLLECTION": ["CZ"]
 }
 
-# --- INICIALIZACE SESSION STATE (Plně rozepsáno) ---
+# --- INICIALIZACE SESSION STATE (Plně rozepsáno a kontrolováno) ---
 if 'api_key' not in st.session_state:
     st.session_state.api_key = ''
     
@@ -609,10 +609,11 @@ if menu_selection == "📦 Vytvoření zásilky":
             serv_obj["swap"] = True
             
         if cod_enabled:
+            # OPRAVA: API vyžaduje 'CashOrCard' přesně v tomto formátu místo uppercase
             serv_obj["cashOnDelivery"] = {
                 "amountCents": int(float(cod_amount) * 100), 
                 "currency": currency, 
-                "payment": "CASH_OR_CARD"
+                "payment": "CashOrCard"
             }
             if cod_vs.strip(): 
                 serv_obj["cashOnDelivery"]["variableSymbol"] = cod_vs.strip()
@@ -887,7 +888,7 @@ elif menu_selection == "🔍 Historie a Tracking":
                                 payload_item["note"] = note.strip()
                             p_load.append(payload_item)
                             
-                        # Uložení Payloadu do logu
+                        # Uložení Payloadu do logu (Opraveno hnízdění "parcel" uzlu)
                         st.session_state.last_request_pickup = p_load
                         
                         headers = {
@@ -926,8 +927,11 @@ elif menu_selection == "🚚 Správa svozů":
         
         if st.button("Objednat plošný svoz adresy", type="primary", use_container_width=True):
             with st.spinner("Odesílám požadavek..."):
+                # OPRAVA: Pro Area pickup DPDGeo API vyžaduje objekt "customerAddress" s "it4emId"
                 p_load = [{
-                    "customerAddressId": int(selected_id_str),
+                    "customerAddress": {
+                        "it4emId": int(selected_id_str)
+                    },
                     "date": date.strftime("%Y-%m-%d")
                 }]
                 
