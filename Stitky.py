@@ -9,7 +9,8 @@ from datetime import datetime, timedelta
 API_BASE = "https://geoapi-test.dpd.cz"
 TRACKING_BASE = "https://tracking.dpd.cz/v1/parcels"
 
-st.set_page_config(page_title="DPD GeoAPI 2.0 Dashboard", layout="wide")
+# OPRAVA 1: Defaultně rozbalený Sidebar
+st.set_page_config(page_title="DPD GeoAPI 2.0 Dashboard", layout="wide", initial_sidebar_state="expanded")
 
 # --- VLASTNÍ DPD CSS STYLY ---
 st.markdown("""
@@ -96,7 +97,7 @@ ALLOWED_COUNTRIES = {
     "THIRDPARTY_COLLECTION": ["CZ"]
 }
 
-# --- INICIALIZACE SESSION STATE ---
+# --- INICIALIZACE SESSION STATE (Plně rozepsáno) ---
 if 'api_key' not in st.session_state:
     st.session_state.api_key = ''
     
@@ -248,7 +249,6 @@ def render_address_block(prefix_key, title_text):
         house = st.text_input("Číslo popisné/orientační:", "63/1", key=f"{prefix_key}_house")
         city = st.text_input("Město:", "Praha", key=f"{prefix_key}_city")
         
-    # Nalezení indexu pro Českou republiku
     country_list = list(COUNTRIES.keys())
     cz_index = country_list.index("Česká republika") if "Česká republika" in country_list else 0
         
@@ -865,7 +865,8 @@ elif menu_selection == "🔍 Historie a Tracking":
                     st.download_button("📄 Stáhnout štítek", data=item["pdf_bytes"], file_name=f"DPD_{item['parcel_number']}.pdf", mime="application/pdf", key=f"dl_{item['parcel_number']}")
                     
             with col_actions3:
-                # Nyní lze zaškrtnout naprosto VŠECHNY balíky, omezení zrušeno
+                # Jak bylo domluveno, umožňujeme zaškrtnout všechny balíky.
+                # Až po kliknutí na tlačítko "Objednat" si je náš systém inteligentně roztřídí.
                 if st.checkbox(f"Vybrat pro svoz", key=f"pick_{item['parcel_number']}"):
                     selected_for_pickup.append(item['parcel_number'])
                     
@@ -891,26 +892,38 @@ elif menu_selection == "🔍 Historie a Tracking":
                         with st.spinner("Odesílám požadavky (Kombinovaný Payload)..."):
                             p_load = []
                             unique_addresses = set()
+                            collection_parcels = []
                             
-                            # 1. Zpracování konkrétních balíků a získání jejich původních adres
+                            # 1. Filtrace zaškrtnutých balíků
                             for p_num in selected_for_pickup:
+                                parcel_info = None
                                 for item in st.session_state.shipment_history:
                                     if item["parcel_number"] == p_num:
-                                        if "it4emId" in item:
-                                            unique_addresses.add(item["it4emId"])
+                                        parcel_info = item
                                         break
                                         
-                                payload_item = {
-                                    "parcel": {
-                                        "parcelNumber": p_num
-                                    },
-                                    "date": date.strftime("%Y-%m-%d")
-                                }
-                                if note.strip():
-                                    payload_item["note"] = note.strip()
-                                p_load.append(payload_item)
-                                
-                            # 2. Vygenerování plošného svozu pro zjištěné adresy (přidáme na začátek pole)
+                                if parcel_info:
+                                    is_collection = parcel_info['service'] in ["Return (Zpětná vratka)", "Svoz k nám (Collection/Import)", "Svoz třetí straně"]
+                                    
+                                    # Sběrný balík -> vložíme konkrétní parcelNumber
+                                    if is_collection:
+                                        collection_parcels.append(p_num)
+                                        payload_item = {
+                                            "parcel": {
+                                                "parcelNumber": p_num
+                                            },
+                                            "date": date.strftime("%Y-%m-%d")
+                                        }
+                                        if note.strip():
+                                            payload_item["note"] = note.strip()
+                                        p_load.append(payload_item)
+                                        
+                                    # Standardní balík -> zaznamenáme pouze adresu, nikoilv balík do API
+                                    else:
+                                        if "it4emId" in parcel_info:
+                                            unique_addresses.add(parcel_info["it4emId"])
+                                            
+                            # 2. Vytvoření plošného svozu pro zjištěné adresy (vloženo na začátek Payloadu)
                             for addr_id in unique_addresses:
                                 addr_payload = {
                                     "customerAddress": {
@@ -922,7 +935,6 @@ elif menu_selection == "🔍 Historie a Tracking":
                                     addr_payload["note"] = note.strip()
                                 p_load.insert(0, addr_payload)
                                 
-                            # 3. Odeslání kombinovaného payloadu
                             st.session_state.last_request_pickup = p_load
                             
                             headers = {
@@ -933,13 +945,33 @@ elif menu_selection == "🔍 Historie a Tracking":
                             st.session_state.last_pickup_response = safe_response_parse(pick_res)
                             
                             if pick_res.status_code in [200, 201]:
-                                st.success("✅ Svoz pro vybrané balíky (včetně adres) byl úspěšně objednán!")
-                                st.session_state.pickup_history.insert(0, {
-                                    "type": "Kombinovaný (Adresa+Balíky)", 
-                                    "detail": f"Zásilky: {', '.join(selected_for_pickup)}", 
-                                    "date": date.strftime("%d. %m. %Y"), 
-                                    "note": note.strip()
-                                })
+                                st.success("✅ Svozy byly úspěšně objednány!")
+                                
+                                # PROPSÁNÍ DO HISTORIE NA STRÁNKU 3
+                                # A) Záznam pro plošné svozy adres
+                                if unique_addresses:
+                                    for addr_id in unique_addresses:
+                                        label = f"ID: {addr_id}"
+                                        for cust_addr in st.session_state.addresses:
+                                            if str(cust_addr["it4emId"]) == str(addr_id):
+                                                label = cust_addr["label"]
+                                                break
+                                                
+                                        st.session_state.pickup_history.insert(0, {
+                                            "type": "Celá adresa (Z výběru balíků)", 
+                                            "detail": label, 
+                                            "date": date.strftime("%d. %m. %Y"), 
+                                            "note": note.strip()
+                                        })
+                                        
+                                # B) Záznam pro sběrné balíky
+                                if collection_parcels:
+                                    st.session_state.pickup_history.insert(0, {
+                                        "type": "Sběrné Balíky", 
+                                        "detail": f"Zásilky: {', '.join(collection_parcels)}", 
+                                        "date": date.strftime("%d. %m. %Y"), 
+                                        "note": note.strip()
+                                    })
                             else: 
                                 st.error(f"Chyba při objednání svozu (Kód {pick_res.status_code})")
 
