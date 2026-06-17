@@ -87,10 +87,10 @@ COUNTRIES = {
 
 # --- RESTRIKCE SLUŽEB DLE ZEMÍ ---
 ALLOWED_COUNTRIES = {
-    "CLASSIC": ["CZ", "SK", "DE", "PL", "AT", "HU", "RO", "FR", "IT", "ES", "SI", "HR", "NL", "BE", "BG"],
+    "CLASSIC": ["CZ", "SK", "DE", "PL", "AT", "HU", "RO", "FR", "IT", "ES", "SI", "HR", "NL", "BE", "BG", "GB"],
     "PRIVATE": ["CZ", "SK", "DE", "PL", "AT", "HU", "RO", "FR", "IT", "ES", "SI", "HR", "NL", "BE"],
     "GUARANTEE": ["DE", "PL", "AT", "SK", "NL", "BE", "FR"], 
-    "PICKUP": ["CZ", "SK", "DE", "PL", "AT", "HU", "RO", "FR", "IT", "ES", "SI", "HR", "NL", "BE", "BG"],
+    "PICKUP": ["CZ", "SK", "DE", "PL", "AT", "HU", "RO", "FR", "IT", "ES", "SI", "HR", "NL", "BE", "BG", "GB"],
     "EXPRESS": list(COUNTRIES.values()), 
     "PNEU": ["CZ"], 
     "DPD12": ["CZ"], 
