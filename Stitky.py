@@ -7,7 +7,7 @@ import re
 from datetime import datetime, timedelta
 
 # --- PRODUKČNÍ URL ---
-API_BASE = "https://geoapi-test.dpd.cz"
+API_BASE = "https://geoapi.dpd.cz"
 TRACKING_BASE = "https://tracking.dpd.cz/v1/parcels"
 
 # OPRAVA: Defaultně rozbalený Sidebar
